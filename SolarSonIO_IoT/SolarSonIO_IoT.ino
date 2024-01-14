@@ -1,3 +1,5 @@
+// Copyright reserver 2024 Xorbite
+
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
