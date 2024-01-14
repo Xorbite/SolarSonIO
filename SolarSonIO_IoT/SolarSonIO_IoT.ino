@@ -170,9 +170,9 @@ void setup()
   delay(500); // Delay for booting the system
 
   // WIFI code
-  // while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-  //   delay(5000);
-  // } 
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    delay(5000);
+  } 
 
   // MQTT code
   bool MQTTconnected = false;
