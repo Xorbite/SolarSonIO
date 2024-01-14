@@ -131,13 +131,13 @@ const char broker[] = "192.168.144.1";
 const int port = 1883;
 
 // Defining the topics to be published
-const char tempTopic[] = "yazanalakkad/temp";
-const char humidityTopic[] = "yazanalakkad/humidity";
-const char objectDetectionTopic[] = "yazanalakkad/objectDetection";
-const char solarVoltageTopic[] = "yazanalakkad/solarVoltage";
-const char solarCurrentTopic[] = "yazanalakkad/solarCurrent";
-const char manualModeCheckTopic[] = "yazanalakkad/manualModeCheck";
-// const char subscribeTopic[] = "yazanalakkad/nothing";
+const char tempTopic[] = "firstlastname/temp";
+const char humidityTopic[] = "firstlastname/humidity";
+const char objectDetectionTopic[] = "firstlastname/objectDetection";
+const char solarVoltageTopic[] = "firstlastname/solarVoltage";
+const char solarCurrentTopic[] = "firstlastname/solarCurrent";
+const char manualModeCheckTopic[] = "firstlastname/manualModeCheck";
+// const char subscribeTopic[] = "firstlastname/nothing";
 // long count = 0;
 // const long interval = 1000; //analog read interval
 
