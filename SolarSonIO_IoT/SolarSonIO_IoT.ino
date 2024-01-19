@@ -9,7 +9,9 @@
 #include <WiFiS3.h>
 #include "arduino_secrets.h"
 #include <ArduinoMqttClient.h>
+#include <Adafruit_MCP3008.h>
 #include <string>
+#include <Bounce2.h>
 
 // Defining our display's resolution
 #define OLED_WIDTH 128
@@ -18,53 +20,55 @@
 // Defining the display's memory address
 #define OLED_ADDR 0x3C
 
-// Defining the display with it's correspondent resolution
+// Instantiate the display with it's correspondent resolution
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT);
 
+// Instantiating Debouncer
+Bounce debouncer = Bounce(); 
 
-// MCP3008 chip select pin
+// Instantiate the MCP3008 chip
+Adafruit_MCP3008 mcp;
+
+// MCP3008 chip/slave select pin
 const int csPin = 10;
 
 // Defining the servos
 Servo horizontalServo;
 Servo verticalServo;
 
-// Caliberating the servos
-int hServoPos = 90;
-int hServoLimitLow = 10;
-int hServoLimitHigh = 180;
-
-int vServoPos = 90;
-int vServoLimitLow = 10;
-int vServoLimitHigh = 180;
-
-
 // LEDs pins
-const int RedLed_pin = 13;
+const int RedLed_pin = 4;
 const int YellowLed_pin = 0;
 
 // Servos pins
 const int horizontalServoPin = 9;
-const int verticalServoPin = 11;
+const int verticalServoPin = 5;
+
+// Caliberating the servos
+int hServoPos = 10;
+int hServoLimitLow = 10;
+int hServoLimitHigh = 180;
+
+int vServoPos = 10;
+int vServoLimitLow = 10;
+int vServoLimitHigh = 180;
 
 
 // ---- Begining joystick code
 
 // Joystick pins
-const int joyX = A4;
-const int joyY = A5;
-const int jsSwitchPin = 1;
+const int joyXPin = 7;
+const int joyYPin = 6;
+const int jsSwitchPin = 2;
+bool toggleState = false; // Current toggled state
+
 
 // Neutral position of joystick (usually the midpoint)
-const int neutralX = 512;
-const int neutralY = 523;
+const int neutralX = 511;
+const int neutralY = 524;
 
 // Deadzone to determine if the joystick is in neutral position
 const int deadzone = 10;
-
-// Variables read from the joystick analog pins
-int joyValX;
-int joyValY;
 
 // END of joystick code ----
 
@@ -97,20 +101,20 @@ int LDR3Value = 0;
 int LDR4Value = 0;
 
 // Manual mode check variable
-String manualSolarMode = "false";
+bool manualSolarMode = false;
 
 // Threshold for LDR difference
-const int LDRThreshold = 20;
+const int LDRThreshold = 50;
 
 // Active buzzer pins
-const int aBuzzerPin = 4;
+const int aBuzzerPin = 3;
 
 // Voltage sensor pin
-const int VSensorPin = A2;
+const int VSensorPin = 5;
 float voltage;
 
 // Current sensor pin
-const int ASensorPin = A3;
+const int ASensorPin = 4;
 float current;
 
 // Normal current voltage with nothing plugged in
@@ -164,15 +168,18 @@ void setup()
   Serial.begin(9600);
   
   // Initiate the SPI protocol for communication and setup the necessary pins accordingly
-  SPI.begin();
-  pinMode(csPin, OUTPUT);
+  mcp.begin(csPin);
 
-  delay(500); // Delay for booting the system
+  delay(500); // Delay for booting up the system
 
   // WIFI code
   while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    Serial.println("Wifi connection failed, making another attempt; please wait!");
     delay(5000);
   } 
+
+  Serial.println("Wifi connected successfully!");
+
 
   // MQTT code
   bool MQTTconnected = false;
@@ -180,12 +187,14 @@ void setup()
   while (!MQTTconnected) {
     if (!mqttClient.connect(broker, port)) {
       delay(1000);  
+      Serial.println("Connection with MQTT broker has failed, trying again; please wait!");
     } else{
       MQTTconnected = true;
+      Serial.println("Connected successfully to the MQTT broker!");
     }
   }
 
-  // mqttClient.onMessage(onMqttMessage);
+  mqttClient.onMessage(onMqttMessage);
   // mqttClient.subscribe(subscribeTopic);
 
   
@@ -235,29 +244,54 @@ void setup()
 
   // Joystick related code 
   // Initialize the joystick switch pin as an input with internal pull-up resistor
-  pinMode(jsSwitchPin, INPUT);
+  pinMode(jsSwitchPin, INPUT_PULLUP);
+
+  // Attaching the debounce function to the switch
+  debouncer.attach(jsSwitchPin);
+  debouncer.interval(50); // interval in milliseconds
 
   // Active buzzer code
   pinMode(aBuzzerPin, OUTPUT);
 
   
   // Voltage sensor code
-  // pinMode(VSensorPin, INPUT);
+  pinMode(VSensorPin, INPUT);
 
   // Current sensor code
-  // pinMode(ASensorPin, INPUT);
+  pinMode(ASensorPin, INPUT);
+
+
 
 }
 
 void loop() 
 {
 
+  // Joystick switch vars
+  int buttonReading = digitalRead(jsSwitchPin);
+  // int switchState = debouncer.read();
+  
+
   display.clearDisplay();
+  
+  // Updating the debouncing value
+  debouncer.update();
+
+
+  // Check if the button state changed to PRESSED
+  if (debouncer.fell()) {
+    toggleState = !toggleState; // Toggle the state
+    manualSolarMode = !manualSolarMode; // Toggle the mode
+  } 
+
+
+  // Serial.println(manualSolarMode);
+  // Serial.println(toggleState);
 
 
   // LDR with automatic servos movements
   autoSolarCtrlMode();
-
+  // manualSolarCtrlMode();
 
   // Ultrasonic sensor function
   distanceFromObjectReader();
@@ -280,10 +314,12 @@ void loop()
 
 
   // Just a random red blinking LED function, you never know if there are airplanes in the area xD
-  blinkRedLed();
+  // blinkRedLed();
 
 
   display.display();
+
+  // delay(500);
 
 }
 
@@ -373,7 +409,7 @@ void mqttPublishData(){
   if (currentMillis - previousMillisManualModeCheck >= intervalManualModeCheck) {
     previousMillisManualModeCheck = currentMillis;
 
-    String manualModeCheckValue = manualSolarMode; // Solar mode check function
+    bool manualModeCheckValue = manualSolarMode; // Solar mode check function
 
     Serial.print("Sending data to topic: ");
     Serial.println(manualModeCheckTopic);
@@ -410,29 +446,7 @@ void onMqttMessage(int messageSize) {
   //   digitalWrite(lightPin, LOW);
   // }
 
-}
-
-int mcpAnalogueIORead(int channel) {
-  int command = 0b11000000; // Start bit, single/differential, D2, D1, and D0 bits for channel selection
-  if(channel < 0 || channel > 7) {
-    return -1; // Invalid channel
-  }
-
-  command |= (channel << 3); // Setting channel
-
-  digitalWrite(csPin, LOW);
-  SPI.beginTransaction(SPISettings(1350000, MSBFIRST, SPI_MODE0));
-  
-  // Send start bit and receive MSB first
-  SPI.transfer(command);
-  int highByte = SPI.transfer(0x00) & 0x03; // Only last 2 bits are data
-  int lowByte = SPI.transfer(0x00);
-  
-  SPI.endTransaction();
-  digitalWrite(csPin, HIGH);
-
-  return (highByte << 8) | lowByte; // Combine two bytes into a single integer
-}
+}   
 
 
 void blinkRedLed() {
@@ -500,7 +514,7 @@ void measureTemp() {
 
 void measureVoltage() {
 
-  int rawVoltage = analogRead(VSensorPin);
+  int rawVoltage = mcp.readADC(VSensorPin);
   int offset = 100;
   // Arduino analog only supports 10 bits which is in total 1024 values from 0 up to 1024. Below we are modifying that value and 
   // mapping it to the voltage value we are going to measure up to which is 25v (2500mv), the sensors maximum and add correction offset. 
@@ -519,7 +533,7 @@ void measureVoltage() {
 
 void measureCurrent() {
 
-  int rawCurrent = analogRead(ASensorPin);
+  int rawCurrent = mcp.readADC(ASensorPin);
   // ACS712 30A: Output is 66mV/A. 2.5V (centered) when no current flows
   float sensorVoltage = (rawCurrent / 1023.0) * 5.0;
   float current = (sensorVoltage - zeroCurrentVoltage) / 0.066; // Convert to current in Amps according to a 30 amps sensor. The 5 amps vrsion should be 0.185 according to the documentation.
@@ -536,7 +550,7 @@ void measureCurrent() {
   display.print("Current: ");
   display.print(current);
   display.println("A");
-
+  Serial.println(current);
 
 
 }
@@ -559,12 +573,12 @@ void distanceFromObjectReader() {
   Serial.println(distance);
 
 
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.print("Distance: ");
-  display.print(distance);
-  display.println(" cm");
+  // display.setTextSize(1);
+  // display.setTextColor(WHITE);
+  // display.setCursor(0, 10);
+  // display.print("Obj distance: ");
+  // display.print(distance);
+  // display.println(" cm");
 
 
 
@@ -590,8 +604,8 @@ void distanceFromObjectReader() {
 
 void autoSolarCtrlMode() {
 
-  if (isObstacleDetected != "true" && digitalRead(jsSwitchPin) == LOW) {
-    manualSolarMode = "false";
+  if (isObstacleDetected != "true" && toggleState != true) {
+    manualSolarMode = false;
 
     int LDR1Value = analogRead(ldr1Pin); // Bottom-Left
     Serial.print("LDR 1: ");
@@ -635,96 +649,33 @@ void autoSolarCtrlMode() {
 
     if (abs(diff_right_left) >= LDRThreshold){        //Change position only if light difference is bigger then the LDRThreshold
       if  (diff_right_left > 0) {
-        if (horizontalServo.read() < 180) {
-          horizontalServo.write((horizontalServo.read()  + 2));
+        if (hServoPos < 180) {
+          horizontalServo.write(hServoPos  + 2);
         }
       }
       if (diff_right_left <  0) {
-        if (horizontalServo.read()  > 0) {
-          horizontalServo.write((horizontalServo.read() - 2));
+        if (hServoPos > 0) {
+          horizontalServo.write(hServoPos - 2);
         }
       }
     }
               
         //up-down movement of solar tracker
 
-    if (abs(diff_top_bottom) >= LDRThreshold){    //Change position only if light difference is bigger then LDRThreshold
-      if (diff_top_bottom > 0) {
-        if  (verticalServo.read() < 180) {
-          verticalServo.write((verticalServo.read()  - 2));
-        }
-      }
-      if (diff_top_bottom <  0) {
-        if (verticalServo.read()  > 0) {
-          verticalServo.write((verticalServo.read() + 2));
-        }
-      }
-    }       
-
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 60);
-    display.print("Manual Mode: ");
-    display.println("False");
-
-    display.display();
-
-  } else {
-    Serial.println("Switching to Manual Mode");
-    manualSolarMode = "true";
-
-    manualSolarCtrlMode();
-
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 60);
-    display.print("Manual Mode: ");
-    display.println("True");
-
-    display.display();
-  }
-
-  
+    // if (abs(diff_top_bottom) >= LDRThreshold){    //Change position only if light difference is bigger then LDRThreshold
+    //   if (diff_top_bottom > 0) {
+    //     if  (verticalServo.read() < 180) {
+    //       verticalServo.write((verticalServo.read()  - 2));
+    //     }
+    //   }
+    //   if (diff_top_bottom <  0) {
+    //     if (verticalServo.read()  > 0) {
+    //       verticalServo.write((verticalServo.read() + 2));
+    //     }
+    //   }
+    // }       
 
 
-  // V.1.1
-  
-  // // Adjust horizontal position
-  // if (abs(rightAvg - leftAvg) > LDRThreshold) {
-  //   if (rightAvg > leftAvg) {
-  //     // hServoPos++;
-  //     horizontalServo.write(hServoPos + 1);
-  //   } else {
-  //     // hServoPos--;
-  //     horizontalServo.write(hServoPos - 1);
-  //   }
-  // }
-
-  // // Adjust vertical position
-  // if (abs(topAvg - bottomAvg) > LDRThreshold) {
-  //   if (topAvg > bottomAvg) {
-  //     verticalServo.write(vServoPos + 1);
-  //     // vServoPos++;
-  //   } else {
-  //     // vServoPos--;
-  //     verticalServo.write(vServoPos - 1);
-  //   }
-  // }
-
-
-  // hServoPos = constrain(hServoPos, 0, 180);
-  // vServoPos = constrain(vServoPos, 0, 180);
-
-
-  // horizontalServo.write(vServoPos);
-  // verticalServo.write(hServoPos);
-
-
-
-
-
-  // V2.0
-  
   // if (topAvg < bottomAvg) {
 
   //   verticalServo.write(vServoPos - 1);
@@ -759,37 +710,64 @@ void autoSolarCtrlMode() {
   //   horizontalServo.write(hServoPos);
   // }
 
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 10);
+    display.print("Manual Mode: ");
+    display.println("False");
 
-  delay(1000);
+
+    
+
+  } else {
+    Serial.println("Manual Mode");
+    manualSolarMode = true;
+
+    manualSolarCtrlMode();
+
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 10);
+    display.print("Manual Mode: ");
+    display.println("True");
+
+    
+  }
+
+
+  // delay(200);
 }
 
 
 void manualSolarCtrlMode() {
 
-  // Servos
-  int xVal = analogRead(joyX);
-  int yVal = analogRead(joyY);
+  // if (manualSolarMode == true) {
+    // Joystick values
+    int xJoyVal = mcp.readADC(joyYPin);
+    int yJoyVal = mcp.readADC(joyXPin);
 
-  // Print the values to the serial monitor
-  Serial.print("X: ");
-  Serial.print(xVal);
-  Serial.print(" Y: ");
-  Serial.println(yVal);
 
-  int joyValX = analogRead(joyX);
-  int joyValY = analogRead(joyY);
+    // Print the values to the serial monitor
+    Serial.print("X: ");
+    Serial.print(xJoyVal);
+    Serial.print(" Y: ");
+    Serial.println(yJoyVal);
+    // Serial.println(lastButtonState);
 
-  // Check if the joystick is moved out of the neutral zone
-  if (abs(yVal - neutralY) > deadzone) {
-    hServoPos = map(yVal, 0, 1023, 0, 180); // Servo value range switch from 0-1023 to 0-180
-    horizontalServo.write(hServoPos); // Set the position of servo 1 according the joystick
-  }
 
-  if (abs(xVal - neutralX) > deadzone) {
-    vServoPos = map(xVal, 0, 1023, 0, 180); // Servo value range switch from 0-1023 to 0-180
-    verticalServo.write(vServoPos); // Set the position of servo 2 according the joystick
-  }
+    // Check if the joystick is moved out of the neutral zone
+    if (abs(yJoyVal - neutralY) > deadzone) {
+      hServoPos = map(yJoyVal, 0, 1023, 0, 180); // Servo value range switch from 0-1023 to 0-180
+      horizontalServo.write(hServoPos); // Set the position of servo 1 according the joystick
+    }
 
+    if (abs(xJoyVal - neutralX) > deadzone) {
+      vServoPos = map(xJoyVal, 0, 1023, 0, 180); // Servo value range switch from 0-1023 to 0-180
+      verticalServo.write(vServoPos); // Set the position of servo 2 according the joystick
+    }
+  // } else {
+  //   autoSolarCtrlMode();
+  // }
 }
 
 
